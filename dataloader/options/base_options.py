@@ -8,8 +8,8 @@ def parse_arguments(args):
         "   with [options]:"
     )
     parser = argparse.ArgumentParser(description=usage_text)
-    parser.add_argument("--data_dir", type=str, default='./data/ACDC/training', help='Path to nii format dataset.')
-    parser.add_argument("--save_data_dir", type=str, default='./data/ACDC/processed/training', help='Path to save the processed dataset.')
+    parser.add_argument("--data_dir", type=str, default='./data/ACDC/original/training', help='Path to nii format dataset.')
+    parser.add_argument("--save_data_dir", type=str, default='./data/ACDC/img_slices_v2/training', help='Path to save the processed dataset.')
     parser.add_argument("--slice_num", type=int, default=-1, help='Cardiac slice index. Default -1 is used to load all slices.')
     parser.add_argument("--data_mode", type=str, default='labeled', help='Type of data to load. labeled | unlabeled')
     parser.add_argument("--resolution", type=float, default=1.37, help='MRI resolution. NxN')
