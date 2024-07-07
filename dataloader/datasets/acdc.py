@@ -209,9 +209,8 @@ class GenACDC(Dataset):
         labels = np.array(labels)
         subject_idx = np.array(subject_idx)
         frame_idx = np.array(frame_idx)
-
-        return images_cropped.transpose(0, 1, 4, 2, 3), masks_cropped.transpose(0, 1, 4, 2,
-                                                                                3), labels, subject_idx, frame_idx
+        return (images_cropped.transpose(0, 1, 4, 2, 3), masks_cropped.transpose(0, 1, 4, 2, 3),
+                labels, subject_idx, frame_idx)
 
     def _load_unlabeled_data(self,
                              include_all: bool = False
@@ -304,7 +303,7 @@ class GenACDC(Dataset):
         m_nii_fname = os.path.join(patient_folder, mask_fname)
         new_res = (self.res, self.res)
         im_nii = nib.load(m_nii_fname)
-        im_data = im_nii.get_data()
+        im_data = im_nii.get_fdata()
         voxel_size = im_nii.header.get_zooms()
         sform_matrix = im_nii.header.get_sform()
         scale_vector = [voxel_size[i] / new_res[i] for i in range(len(new_res))]
