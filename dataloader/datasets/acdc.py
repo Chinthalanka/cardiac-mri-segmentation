@@ -64,11 +64,14 @@ class GenACDC(Dataset):
             targets = []
             for i in range(images.shape[0]):
                 for slice_num in range(images[i].shape[0]):
-                    self._save_intensity_image(images[i][slice_num].squeeze(0).numpy(), path_to_dir,
-                                               self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num)
-                    self._save_mask(masks[i][slice_num].squeeze(0).numpy(), path_to_dir, self.data['subject_idx'][i],
-                                    self.data['frame_idx'][i], slice_num)
-                    targets.append(self.data['labels'][i].item())
+                    if images[i][slice_num].squeeze(0).numpy().sum() == 0:
+                        continue
+                    else:
+                        self._save_intensity_image(images[i][slice_num].squeeze(0).numpy(), path_to_dir,
+                                                   self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num)
+                        self._save_mask(masks[i][slice_num].squeeze(0).numpy(), path_to_dir,
+                                        self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num)
+                        targets.append(self.data['labels'][i].item())
         else:
             images = self.data['images'][:, slice_num]
             masks = self.data['masks'][:, slice_num]
@@ -204,8 +207,16 @@ class GenACDC(Dataset):
 
         # images_cropped = np.expand_dims(images_cropped[:], axis=0)
         images_cropped = [np.expand_dims(image, axis=0) for image in images_cropped]
-        images_cropped = np.concatenate(images_cropped, axis=0)
-        masks_cropped = np.concatenate([masks_myo_cropped, masks_lv_cropped, masks_rv_cropped], axis=-1)
+
+        # Pad the arrays to the same size along the second dimension
+        padded_img_arrays = self._pad_arrays(images_cropped, arr_typ='image')
+        padded_lv_mask_arrays = self._pad_arrays(masks_lv_cropped, arr_typ='mask')
+        padded_rv_mask_arrays = self._pad_arrays(masks_rv_cropped, arr_typ='mask')
+        padded_myo_mask_arrays = self._pad_arrays(masks_myo_cropped, arr_typ='mask')
+
+        images_cropped = np.concatenate(padded_img_arrays, axis=0)
+        masks_cropped = np.concatenate([padded_myo_mask_arrays, padded_lv_mask_arrays, padded_rv_mask_arrays],
+                                       axis=-1)
         labels = np.array(labels)
         subject_idx = np.array(subject_idx)
         frame_idx = np.array(frame_idx)
@@ -312,7 +323,7 @@ class GenACDC(Dataset):
         dims = im_data.shape
         if len(dims) < 4:
             for i in range(im_data.shape[-1]):
-                if i > 5:
+                if i > im_data.shape[-1]-1:
                     break
                 im = im_data[..., i]
                 rescaled = transform.rescale(im, scale_vector, order=order, preserve_range=True, mode='constant')
@@ -488,3 +499,25 @@ class GenACDC(Dataset):
             y[2],
             cmap='gray'
             )
+
+    def _pad_arrays(self, list_of_arrays: list, arr_typ: str) -> list:
+        padded_arrays = []
+        if arr_typ == 'image':
+            # Find the maximum number of slices along the second dimension for images
+            max_slices = max(array.shape[1] for array in list_of_arrays)
+
+            # Pad the arrays to the same size along the second dimension
+            for array in list_of_arrays:
+                padding = ((0, 0), (0, max_slices - array.shape[1]), (0, 0), (0, 0), (0, 0))
+                padded_array = np.pad(array, padding, mode='constant', constant_values=0)
+                padded_arrays.append(padded_array)
+        else:
+            # Find the maximum number of slices along the first dimension for masks
+            max_slices = max(array.shape[0] for array in list_of_arrays)
+
+            # Pad the arrays to the same size along the second dimension
+            for array in list_of_arrays:
+                padding = ((0, max_slices - array.shape[0]), (0, 0), (0, 0), (0, 0))
+                padded_array = np.pad(array, padding, mode='constant', constant_values=0)
+                padded_arrays.append(padded_array)
+        return padded_arrays
