@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import json
 import typing
 import torch
@@ -68,9 +69,11 @@ class GenACDC(Dataset):
                         continue
                     else:
                         self._save_intensity_image(images[i][slice_num].squeeze(0).numpy(), path_to_dir,
-                                                   self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num)
+                                                   self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num,
+                                                   self.data['data_aug_mthd'][i])
                         self._save_mask(masks[i][slice_num].squeeze(0).numpy(), path_to_dir,
-                                        self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num)
+                                        self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num,
+                                        self.data['data_aug_mthd'][i])
                         targets.append(self.data['labels'][i].item())
         else:
             images = self.data['images'][:, slice_num]
@@ -121,19 +124,20 @@ class GenACDC(Dataset):
 
     def _load_labeled_data(self) -> typing.Dict[str, np.array]:
         td = {}
-        images, masks, labels, subject_idx, frame_idx = self._load_raw_labeled_data()
+        images, masks, labels, subject_idx, frame_idx, data_aug_mthd = self._load_raw_labeled_data()
         td = {
             "images": torch.from_numpy(np.float32(images)),
             "masks": torch.from_numpy(np.float32(masks)),
             "labels": torch.from_numpy(np.float32(labels)),
             "subject_idx": torch.from_numpy(subject_idx),
-            "frame_idx": torch.from_numpy(frame_idx)
+            "frame_idx": torch.from_numpy(frame_idx),
+            "data_aug_mthd": data_aug_mthd
         }
         return td
 
     def _load_raw_labeled_data(self) -> typing.List[np.array]:
-        images, masks_lv, masks_rv, masks_myo, labels = [], [], [], [], []
-        subject_idx, frame_idx = [], []
+        images, masks_lv, masks_rv, masks_myo, labels,  = [], [], [], [], []
+        subject_idx, frame_idx, data_aug_mthd = [], [], []
         volumes = list(range(1, 151))
         for patient_i in volumes:
             patient = 'patient%03d' % patient_i
@@ -164,7 +168,15 @@ class GenACDC(Dataset):
             ims = [f.replace('_gt', '') for f in gt]
             for i in range(len(ims)):
                 subject_idx.append(patient_i)
-                frame_idx.append(int(ims[i].split('.')[0].split('frame')[-1]))
+                frame_idx.append(int(ims[i].split('.')[0].split('frame')[-1][:2]))
+
+                # Get the data augmentation method if the image is augmented
+                data_aug_match = re.search(r'(?<=frame\d{2})_(\w+)(?=\.nii.gz$)', ims[i])
+                if data_aug_match:
+                    data_aug_mthd.append(data_aug_match.group(0))
+                else:
+                    data_aug_mthd.append("_org")
+
                 im = self._process_raw_image(ims[i], patient_folder)
                 im = np.expand_dims(im, axis=-1)
 
@@ -221,7 +233,7 @@ class GenACDC(Dataset):
         subject_idx = np.array(subject_idx)
         frame_idx = np.array(frame_idx)
         return (images_cropped.transpose(0, 1, 4, 2, 3), masks_cropped.transpose(0, 1, 4, 2, 3),
-                labels, subject_idx, frame_idx)
+                labels, subject_idx, frame_idx, data_aug_mthd)
 
     def _load_unlabeled_data(self,
                              include_all: bool = False
@@ -463,13 +475,14 @@ class GenACDC(Dataset):
                               path: str,
                               subject_idx: int,
                               frame_idx: int,
-                              slice_idx: int
+                              slice_idx: int,
+                              data_aug_mthd: str = '_org'
                               ) -> None:
         subject_idx = '%03d' % subject_idx
         frame_idx = '%02d' % frame_idx
         slice_idx = '%02d' % slice_idx
         plt.imsave(
-            path + os.sep + 'images' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '.png',
+            path + os.sep + 'images' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '.png',
             y,
             cmap='gray'
         )
@@ -479,23 +492,24 @@ class GenACDC(Dataset):
                    path: str,
                    subject_idx: int,
                    frame_idx: int,
-                   slice_idx: int
+                   slice_idx: int,
+                   data_aug_mthd: str = '_org'
                    ) -> None:
         subject_idx = '%03d' % subject_idx
         frame_idx = '%02d' % frame_idx
         slice_idx = '%02d' % slice_idx
         plt.imsave(
-            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '_MYO' + '.png',
+            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '_MYO' + '.png',
             y[0],
             cmap='gray'
         )
         plt.imsave(
-            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '_LV' + '.png',
+            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '_LV' + '.png',
             y[1],
             cmap='gray'
         )
         plt.imsave(
-            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '_RV' + '.png',
+            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '_RV' + '.png',
             y[2],
             cmap='gray'
             )
