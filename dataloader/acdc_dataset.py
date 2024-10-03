@@ -53,7 +53,14 @@ class ACDCDataset(Dataset):
         msk_rv = io.imread(msk_rv_path, as_gray=True)
         msk_myo = io.imread(msk_myo_path, as_gray=True)
 
-        sample = {'image': np.expand_dims(image, axis=-1), 'mask_lv': msk_lv, 'mask_rv': msk_rv, 'mask_myo': msk_myo}
+        masks = torch.stack(
+            [torch.tensor(msk_lv, dtype=torch.float32),
+             torch.tensor(msk_rv, dtype=torch.float32),
+             torch.tensor(msk_myo, dtype=torch.float32)],
+            dim=0
+        )
+
+        sample = {'image': np.expand_dims(image, axis=-1), 'masks': masks}
 
         if self.transform:
             sample = self.transform(sample)
