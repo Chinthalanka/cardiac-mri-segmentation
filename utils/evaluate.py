@@ -20,8 +20,8 @@ def evaluate(net, dataloader, device, amp):
 
             # move images and labels to correct device and type
             images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-            # mask_true = masks.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-            mask_true = masks_all.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
+            mask_true = masks.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
+            # mask_true = masks_all.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
             '''
             mask_true = torch.stack(
                 [torch.tensor(msks_lv, dtype=torch.float32),
@@ -42,8 +42,8 @@ def evaluate(net, dataloader, device, amp):
             else:
                 assert mask_true.min() >= 0 and mask_true.max() < net.n_classes, 'True mask indices should be in [0, n_classes]'
                 # convert to one-hot format
-                mask_true = mask_true.long()
-                # mask_pred = (F.sigmoid(mask_pred) > 0.5).float()
+                # mask_true = mask_true.long()
+                mask_pred = (F.sigmoid(mask_pred) > 0.5).float()
                 # mask_pred = mask_pred.float()
 
                 # Compute the Dice score, ignoring background

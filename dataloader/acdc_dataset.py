@@ -66,10 +66,12 @@ class ACDCDataset(Dataset):
         if self.sequence:
             image = torch.from_numpy(image).float().unsqueeze(0)
 
-        masks = torch.stack(
-            [torch.tensor(msk_lv, dtype=torch.float32),
-             torch.tensor(msk_rv, dtype=torch.float32),
-             torch.tensor(msk_myo, dtype=torch.float32)],
+        masks = torch.stack([
+            torch.zeros((224, 224), dtype=torch.float32),  # Create mask for the background
+            torch.tensor(msk_lv, dtype=torch.float32),
+            torch.tensor(msk_rv, dtype=torch.float32),
+            torch.tensor(msk_myo, dtype=torch.float32)
+        ],
             dim=0
         )
 
