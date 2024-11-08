@@ -163,4 +163,5 @@ cython_debug/
 /data
 /logs
 /code_backup
-/experiments/src
+/experiments/models
+/experiments/outputs
