@@ -1,6 +1,5 @@
 import os
 import sys
-import re
 import json
 import typing
 import torch
@@ -55,40 +54,27 @@ class GenACDC(Dataset):
         try:
             os.mkdir(path_to_dir)
             os.mkdir(path_to_dir + os.sep + 'images')
-            os.mkdir(path_to_dir + os.sep + 'masks_all')
             os.mkdir(path_to_dir + os.sep + 'masks')
             os.mkdir(path_to_dir + os.sep + 'labels')
         except OSError:
             print("Creation of directories in %s failed" % path_to_dir)
         if slice_num == -1:
             images = self.data['images']
-            masks_all = self.data['masks_all']
             masks = self.data['masks']
             targets = []
             for i in range(images.shape[0]):
                 for slice_num in range(images[i].shape[0]):
-                    if images[i][slice_num].squeeze(0).numpy().sum() == 0:
-                        continue
-                    else:
-                        self._save_intensity_image(images[i][slice_num].squeeze(0).numpy(), path_to_dir,
-                                                   self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num,
-                                                   self.data['data_aug_mthd'][i])
-                        self._save_masks_all(masks_all[i][slice_num].squeeze(0).numpy(), path_to_dir,
-                                             self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num,
-                                             self.data['data_aug_mthd'][i])
-                        self._save_mask(masks[i][slice_num].squeeze(0).numpy(), path_to_dir,
-                                        self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num,
-                                        self.data['data_aug_mthd'][i])
-                        targets.append(self.data['labels'][i].item())
+                    self._save_intensity_image(images[i][slice_num].squeeze(0).numpy(), path_to_dir,
+                                               self.data['subject_idx'][i], self.data['frame_idx'][i], slice_num)
+                    self._save_mask(masks[i][slice_num].squeeze(0).numpy(), path_to_dir, self.data['subject_idx'][i],
+                                    self.data['frame_idx'][i], slice_num)
+                    targets.append(self.data['labels'][i].item())
         else:
             images = self.data['images'][:, slice_num]
-            masks_all = self.data['masks_all'][:, slice_num]
             masks = self.data['masks'][:, slice_num]
             for i in range(images.shape[0]):
                 self._save_intensity_image(images[i].squeeze(0).numpy(), path_to_dir, self.data['subject_idx'][i],
                                            self.data['frame_idx'][i], slice_num)
-                self._save_masks_all(masks_all[i].squeeze(0).numpy(), path_to_dir, self.data['subject_idx'][i],
-                                     self.data['frame_idx'][i], slice_num)
                 self._save_mask(masks[i].squeeze(0).numpy(), path_to_dir, self.data['subject_idx'][i],
                                 self.data['frame_idx'][i], slice_num)
             targets = self.data['labels'].tolist()
@@ -132,21 +118,19 @@ class GenACDC(Dataset):
 
     def _load_labeled_data(self) -> typing.Dict[str, np.array]:
         td = {}
-        images, masks_all, masks, labels, subject_idx, frame_idx, data_aug_mthd = self._load_raw_labeled_data()
+        images, masks, labels, subject_idx, frame_idx = self._load_raw_labeled_data()
         td = {
             "images": torch.from_numpy(np.float32(images)),
-            "masks_all": torch.from_numpy(np.float32(masks_all)),
             "masks": torch.from_numpy(np.float32(masks)),
             "labels": torch.from_numpy(np.float32(labels)),
             "subject_idx": torch.from_numpy(subject_idx),
-            "frame_idx": torch.from_numpy(frame_idx),
-            "data_aug_mthd": data_aug_mthd
+            "frame_idx": torch.from_numpy(frame_idx)
         }
         return td
 
     def _load_raw_labeled_data(self) -> typing.List[np.array]:
-        images, masks_all, masks_lv, masks_rv, masks_myo, labels,  = [], [], [], [], [], []
-        subject_idx, frame_idx, data_aug_mthd = [], [], []
+        images, masks_lv, masks_rv, masks_myo, labels = [], [], [], [], []
+        subject_idx, frame_idx = [], []
         volumes = list(range(1, 151))
         for patient_i in volumes:
             patient = 'patient%03d' % patient_i
@@ -177,22 +161,13 @@ class GenACDC(Dataset):
             ims = [f.replace('_gt', '') for f in gt]
             for i in range(len(ims)):
                 subject_idx.append(patient_i)
-                frame_idx.append(int(ims[i].split('.')[0].split('frame')[-1][:2]))
-
-                # Get the data augmentation method if the image is augmented
-                data_aug_match = re.search(r'(?<=frame\d{2})_(\w+)(?=\.nii.gz$)', ims[i])
-                if data_aug_match:
-                    data_aug_mthd.append(data_aug_match.group(0))
-                else:
-                    data_aug_mthd.append("_org")
-
+                frame_idx.append(int(ims[i].split('.')[0].split('frame')[-1]))
                 im = self._process_raw_image(ims[i], patient_folder)
                 im = np.expand_dims(im, axis=-1)
 
                 m = self._resample_raw_image(gt[i], patient_folder, binary=True)
                 m = np.expand_dims(m, axis=-1)
                 images.append(im)
-                masks_all.append(m)
 
                 # convert 3-dim mask array to 3 binary mask arrays for lv, rv, myo
                 m_lv = m.copy()
@@ -214,7 +189,6 @@ class GenACDC(Dataset):
 
         # move slice axis to the first position
         images = [np.moveaxis(im, 2, 0) for im in images]
-        masks_all = [np.moveaxis(m, 2, 0) for m in masks_all]
         masks_lv = [np.moveaxis(m, 2, 0) for m in masks_lv]
         masks_rv = [np.moveaxis(m, 2, 0) for m in masks_rv]
         masks_myo = [np.moveaxis(m, 2, 0) for m in masks_myo]
@@ -224,32 +198,19 @@ class GenACDC(Dataset):
             images[i] = (images[i] / 757.4495) * 255.0
 
         # crop images and masks to the same pixel dimensions and concatenate all data
-        images_cropped, masks_all_cropped = self._crop_same(images, masks_all, (224, 224))
-        _, masks_lv_cropped = self._crop_same(images, masks_lv, (224, 224))
+        images_cropped, masks_lv_cropped = self._crop_same(images, masks_lv, (224, 224))
         _, masks_rv_cropped = self._crop_same(images, masks_rv, (224, 224))
         _, masks_myo_cropped = self._crop_same(images, masks_myo, (224, 224))
 
         # images_cropped = np.expand_dims(images_cropped[:], axis=0)
         images_cropped = [np.expand_dims(image, axis=0) for image in images_cropped]
-        masks_all_cropped = [np.expand_dims(mask, axis=0) for mask in masks_all_cropped]
-
-        # Pad the arrays to the same size along the second dimension
-        padded_img_arrays = self._pad_arrays(images_cropped, arr_typ='image')
-        padded_all_mask_arrays = self._pad_arrays(masks_all_cropped, arr_typ='masks_all')
-        padded_lv_mask_arrays = self._pad_arrays(masks_lv_cropped, arr_typ='mask')
-        padded_rv_mask_arrays = self._pad_arrays(masks_rv_cropped, arr_typ='mask')
-        padded_myo_mask_arrays = self._pad_arrays(masks_myo_cropped, arr_typ='mask')
-
-        images_cropped = np.concatenate(padded_img_arrays, axis=0)
-        masks_all_cropped = np.concatenate(padded_all_mask_arrays, axis=0)
-        masks_cropped = np.concatenate([padded_myo_mask_arrays, padded_lv_mask_arrays, padded_rv_mask_arrays],
-                                       axis=-1)
+        images_cropped = np.concatenate(images_cropped, axis=0)
+        masks_cropped = np.concatenate([masks_myo_cropped, masks_lv_cropped, masks_rv_cropped], axis=-1)
         labels = np.array(labels)
         subject_idx = np.array(subject_idx)
         frame_idx = np.array(frame_idx)
-        return (images_cropped.transpose(0, 1, 4, 2, 3), masks_all_cropped.transpose(0, 1, 4, 2, 3),
-                masks_cropped.transpose(0, 1, 4, 2, 3),
-                labels, subject_idx, frame_idx, data_aug_mthd)
+        return (images_cropped.transpose(0, 1, 4, 2, 3), masks_cropped.transpose(0, 1, 4, 2, 3),
+                labels, subject_idx, frame_idx)
 
     def _load_unlabeled_data(self,
                              include_all: bool = False
@@ -351,7 +312,7 @@ class GenACDC(Dataset):
         dims = im_data.shape
         if len(dims) < 4:
             for i in range(im_data.shape[-1]):
-                if i > im_data.shape[-1]-1:
+                if i > 5:
                     break
                 im = im_data[..., i]
                 rescaled = transform.rescale(im, scale_vector, order=order, preserve_range=True, mode='constant')
@@ -491,31 +452,13 @@ class GenACDC(Dataset):
                               path: str,
                               subject_idx: int,
                               frame_idx: int,
-                              slice_idx: int,
-                              data_aug_mthd: str = '_org'
+                              slice_idx: int
                               ) -> None:
         subject_idx = '%03d' % subject_idx
         frame_idx = '%02d' % frame_idx
         slice_idx = '%02d' % slice_idx
         plt.imsave(
-            path + os.sep + 'images' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '.png',
-            y,
-            cmap='gray'
-        )
-
-    def _save_masks_all(self,
-                        y: np.array,
-                        path: str,
-                        subject_idx: int,
-                        frame_idx: int,
-                        slice_idx: int,
-                        data_aug_mthd: str = '_org'
-                        ) -> None:
-        subject_idx = '%03d' % subject_idx
-        frame_idx = '%02d' % frame_idx
-        slice_idx = '%02d' % slice_idx
-        plt.imsave(
-            path + os.sep + 'masks_all' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '.png',
+            path + os.sep + 'images' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '.png',
             y,
             cmap='gray'
         )
@@ -525,46 +468,23 @@ class GenACDC(Dataset):
                    path: str,
                    subject_idx: int,
                    frame_idx: int,
-                   slice_idx: int,
-                   data_aug_mthd: str = '_org'
+                   slice_idx: int
                    ) -> None:
         subject_idx = '%03d' % subject_idx
         frame_idx = '%02d' % frame_idx
         slice_idx = '%02d' % slice_idx
         plt.imsave(
-            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '_MYO' + '.png',
+            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '_MYO' + '.png',
             y[0],
             cmap='gray'
         )
         plt.imsave(
-            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '_LV' + '.png',
+            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '_LV' + '.png',
             y[1],
             cmap='gray'
         )
         plt.imsave(
-            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + data_aug_mthd + '_RV' + '.png',
+            path + os.sep + 'masks' + os.sep + 'subject' + subject_idx + '_frame' + frame_idx + '_slice' + slice_idx + '_RV' + '.png',
             y[2],
             cmap='gray'
             )
-
-    def _pad_arrays(self, list_of_arrays: list, arr_typ: str) -> list:
-        padded_arrays = []
-        if arr_typ == 'image' or arr_typ == 'masks_all':
-            # Find the maximum number of slices along the second dimension for images
-            max_slices = max(array.shape[1] for array in list_of_arrays)
-
-            # Pad the arrays to the same size along the second dimension
-            for array in list_of_arrays:
-                padding = ((0, 0), (0, max_slices - array.shape[1]), (0, 0), (0, 0), (0, 0))
-                padded_array = np.pad(array, padding, mode='constant', constant_values=0)
-                padded_arrays.append(padded_array)
-        else:
-            # Find the maximum number of slices along the first dimension for masks
-            max_slices = max(array.shape[0] for array in list_of_arrays)
-
-            # Pad the arrays to the same size along the second dimension
-            for array in list_of_arrays:
-                padding = ((0, max_slices - array.shape[0]), (0, 0), (0, 0), (0, 0))
-                padded_array = np.pad(array, padding, mode='constant', constant_values=0)
-                padded_arrays.append(padded_array)
-        return padded_arrays
