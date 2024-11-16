@@ -23,6 +23,7 @@ class ACDCDataset(Dataset):
         self.sequence = sequence
         self.transform_ind = transform_ind
         self.transform = albumentations.Compose([
+            albumentations.GaussianBlur(blur_limit=(3, 7), p=0.5),  # Applies Gaussian blur with a kernel size between 3 and 7
             albumentations.augmentations.Normalize(mean=0.5, std=0.5, max_pixel_value=1.0)]
         )
 
