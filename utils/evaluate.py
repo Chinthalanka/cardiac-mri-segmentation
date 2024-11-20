@@ -44,6 +44,7 @@ def evaluate(net, dataloader, device, amp):
                 # convert to one-hot format
                 # mask_true = mask_true.long()
                 mask_pred = (F.sigmoid(mask_pred) > 0.5).float()
+                # mask_pred = F.softmax(mask_pred, dim=1).float()
                 # mask_pred = mask_pred.float()
 
                 # Compute the Dice score, ignoring background
