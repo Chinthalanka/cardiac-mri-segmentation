@@ -115,7 +115,7 @@ class ACDCDataset(Dataset):
 
         # Apply other transformations
         if self.transform_ind:
-            # Transform cropped image
+            # Transform cropped/ uncropped image
             augmented_image = self.transform(image=image)
             image = torch.from_numpy(augmented_image['image'])
 
