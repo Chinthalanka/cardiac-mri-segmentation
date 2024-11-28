@@ -15,14 +15,14 @@ warnings.filterwarnings("ignore")
 
 class ACDCDataset(Dataset):
     """Automated Cardiac Diagnosis Challenge (ACDC) Dataset"""
-    def __init__(self, root_dir, dataset='training', sequence=False, transform_ind=True,
+    def __init__(self, root_dir, dataset='training', transform_ind=True, transform_mask=False,
                  crop_resize_ind=False, margin=0.02, target_size=(224, 224)):
         self.root_dir = root_dir
         self.img_path_list = []
         self.img_name_list = []
         self.dataset = dataset
-        self.sequence = sequence
         self.transform_ind = transform_ind
+        self.transform_mask = transform_mask
         self.crop_resize_ind = crop_resize_ind
         self.margin = margin
         self.target_size = target_size
@@ -49,13 +49,12 @@ class ACDCDataset(Dataset):
             idx = idx.tolist()
 
         img_name = self.img_name_list[idx]
-        msk_all_name = img_name
+        # msk_all_name = img_name
         msk_lv_name = img_name + '_LV'
         msk_rv_name = img_name + '_RV'
         msk_myo_name = img_name + '_MYO'
 
         img_path = self.img_path_list[idx]
-        msk_all_path = os.path.join(self.msk_all_dir, f'{msk_all_name}.png')
         msk_lv_path = os.path.join(self.msk_dir, f'{msk_lv_name}.png')
         msk_rv_path = os.path.join(self.msk_dir, f'{msk_rv_name}.png')
         msk_myo_path = os.path.join(self.msk_dir, f'{msk_myo_name}.png')
@@ -63,22 +62,28 @@ class ACDCDataset(Dataset):
         # Read images and masks corresponding to a given index
         image = io.imread(img_path, as_gray=True)
         org_image = image.copy()
-        msk_all = io.imread(msk_all_path, as_gray=True)
-        org_msk_all = msk_all.copy()
         msk_lv = io.imread(msk_lv_path, as_gray=True)
         msk_rv = io.imread(msk_rv_path, as_gray=True)
         msk_myo = io.imread(msk_myo_path, as_gray=True)
 
-        # For sequence modeling, add a temporal dimension
-        if self.sequence:
-            image = torch.from_numpy(image).float().unsqueeze(0)
-            org_image = torch.from_numpy(org_image).float().unsqueeze(0)
+        msk_lv = (msk_lv > 0).astype(np.int32)
+        msk_rv = (msk_rv > 0).astype(np.int32)
+        msk_myo = (msk_myo > 0).astype(np.int32)
+
+        # Initialize the combined mask with background
+        msk_all = np.zeros_like(msk_lv, dtype=np.int32)
+
+        # Assign 1 for LV, 2 for RV, and 3 for MYO
+        msk_all[msk_lv == 1] = 1
+        msk_all[msk_rv == 1] = 2
+        msk_all[msk_myo == 1] = 3
+        org_msk_all = msk_all.copy()
 
         masks = torch.stack([
-            torch.zeros(msk_lv.shape, dtype=torch.float32),  # Create mask for the background
-            torch.tensor(msk_lv, dtype=torch.float32),
-            torch.tensor(msk_rv, dtype=torch.float32),
-            torch.tensor(msk_myo, dtype=torch.float32)
+            torch.zeros(msk_lv.shape, dtype=torch.int32),  # Create mask for the background
+            torch.tensor(msk_lv, dtype=torch.int32),
+            torch.tensor(msk_rv, dtype=torch.int32),
+            torch.tensor(msk_myo, dtype=torch.int32)
         ],
             dim=0
         )
@@ -111,7 +116,7 @@ class ACDCDataset(Dataset):
                 dtype=torch.float32
             )
         else:
-            bounding_box = None
+            bounding_box = [0.0, 0.0, 1.0, 1.0]
 
         # Apply other transformations
         if self.transform_ind:
@@ -123,12 +128,21 @@ class ACDCDataset(Dataset):
             augmented_org_image = self.transform(image=org_image)
             org_image = torch.from_numpy(augmented_org_image['image'])
 
+            if self.transform_mask:
+                # Apply median filtering to combined mask
+                transform_mask = albumentations.Compose([
+                    albumentations.MedianBlur(blur_limit=(7,9), p=1.0),
+                ])
+                transformed_msk_all = transform_mask(image=msk_all.astype(np.uint8))
+                msk_all = torch.from_numpy(transformed_msk_all['image'])
+
         sample = {
             'org_image': np.expand_dims(org_image, axis=-1),
             'image': np.expand_dims(image, axis=-1),
             # 'masks_all': msk_all,
             'org_masks_all': np.expand_dims(org_msk_all, axis=-1),
-            'masks_all': np.expand_dims(msk_all, axis=-1),
+            # 'masks_all': np.expand_dims(msk_all, axis=-1),
+            'masks_all': msk_all,
             'masks': masks,
             'bounding_box': bounding_box,
             'idx': idx
