@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-import albumentations
+import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from skimage import io
 from torch.utils.data import Dataset
@@ -26,10 +26,45 @@ class ACDCDataset(Dataset):
         self.crop_resize_ind = crop_resize_ind
         self.margin = margin
         self.target_size = target_size
-        self.transform = albumentations.Compose([
-            albumentations.GaussianBlur(blur_limit=(3, 7), p=0.5),  # Applies Gaussian blur with a kernel size between 3 and 7
-            albumentations.augmentations.Normalize(mean=0.5, std=0.5, max_pixel_value=1.0)]
+        self.transform_common = A.Compose([
+            # Geometric augmentations
+            A.VerticalFlip(p=0.5),
+            A.RandomRotate90(p=0.5),
+
+            # Elastic deformation to simulate variations in anatomy
+            A.ElasticTransform(p=0.2, alpha=1.0, sigma=50, alpha_affine=50),
+
+            # Blurring to simulate low-resolution artifacts
+            A.OneOf(
+                [
+                    A.MotionBlur(p=0.2),
+                    A.MedianBlur(blur_limit=3, p=0.1),
+                    A.GaussianBlur(blur_limit=3, p=0.1),
+                ],
+                p=0.3,
+            ),
+
+            # Ensure the data is converted to tensors
+            # ToTensorV2(),
+        ],
+            additional_targets={"mask": "mask"}  # To apply the same transformations to masks
         )
+
+        self.transform_img = A.Compose([
+            # Brightness and contrast adjustments
+            A.RandomBrightnessContrast(p=0.2),
+
+            # Adding Gaussian noise
+            A.GaussNoise(p=0.2),
+
+            # Normalize image
+            A.augmentations.Normalize(mean=0.5, std=0.5, max_pixel_value=1.0),
+
+            # Ensure the data is converted to tensors
+            # ToTensorV2(),
+        ],
+        )
+
 
         self.img_dir = os.path.join(self.root_dir, f'{self.dataset}/labeled_-1/images/')
         self.msk_all_dir = os.path.join(self.root_dir, f'{self.dataset}/labeled_-1/masks_all/')
@@ -61,17 +96,18 @@ class ACDCDataset(Dataset):
 
         # Read images and masks corresponding to a given index
         image = io.imread(img_path, as_gray=True)
+        image = (image * 255).astype(np.uint8)  # Scale to [0, 255]
         org_image = image.copy()
         msk_lv = io.imread(msk_lv_path, as_gray=True)
         msk_rv = io.imread(msk_rv_path, as_gray=True)
         msk_myo = io.imread(msk_myo_path, as_gray=True)
 
-        msk_lv = (msk_lv > 0).astype(np.int32)
-        msk_rv = (msk_rv > 0).astype(np.int32)
-        msk_myo = (msk_myo > 0).astype(np.int32)
+        msk_lv = (msk_lv > 0).astype(np.uint8)
+        msk_rv = (msk_rv > 0).astype(np.uint8)
+        msk_myo = (msk_myo > 0).astype(np.uint8)
 
         # Initialize the combined mask with background
-        msk_all = np.zeros_like(msk_lv, dtype=np.int32)
+        msk_all = np.zeros_like(msk_lv, dtype=np.uint8)
 
         # Assign 1 for LV, 2 for RV, and 3 for MYO
         msk_all[msk_lv == 1] = 1
@@ -80,10 +116,10 @@ class ACDCDataset(Dataset):
         org_msk_all = msk_all.copy()
 
         masks = torch.stack([
-            torch.zeros(msk_lv.shape, dtype=torch.int32),  # Create mask for the background
-            torch.tensor(msk_lv, dtype=torch.int32),
-            torch.tensor(msk_rv, dtype=torch.int32),
-            torch.tensor(msk_myo, dtype=torch.int32)
+            torch.zeros(msk_lv.shape, dtype=torch.uint8),  # Create mask for the background
+            torch.tensor(msk_lv, dtype=torch.uint8),
+            torch.tensor(msk_rv, dtype=torch.uint8),
+            torch.tensor(msk_myo, dtype=torch.uint8)
         ],
             dim=0
         )
@@ -94,9 +130,9 @@ class ACDCDataset(Dataset):
             bounding_box, _ = self.get_combined_bounding_box_with_margin(masks, margin=self.margin)
             x_min, y_min, x_max, y_max = bounding_box
 
-            crop_resize_transform = albumentations.Compose([
-                albumentations.Crop(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max),
-                albumentations.Resize(self.target_size[0], self.target_size[1])
+            crop_resize_transform = A.Compose([
+                A.Crop(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max),
+                A.Resize(self.target_size[0], self.target_size[1])
                 # ToTensorV2()
             ],
             additional_targets={'mask_combined': 'mask'}
@@ -118,30 +154,34 @@ class ACDCDataset(Dataset):
         else:
             bounding_box = [0.0, 0.0, 1.0, 1.0]
 
-        # Apply other transformations
+        # Apply transformations to image and mask
         if self.transform_ind:
-            # Transform cropped/ uncropped image
-            augmented_image = self.transform(image=image)
-            image = torch.from_numpy(augmented_image['image'])
+            # Apply common transformations
+            transformed = self.transform_common(image=image, mask=msk_all)
+            image = transformed['image']
+            msk_all = torch.from_numpy(transformed['mask'])
+
+            # Apply image specific transformations
+            transformed = self.transform_img(image=image)
+            image = torch.from_numpy(transformed['image'])
 
             # Transform original image
-            augmented_org_image = self.transform(image=org_image)
-            org_image = torch.from_numpy(augmented_org_image['image'])
+            # augmented_org_image = self.transform(image=org_image)
+            # org_image = torch.from_numpy(augmented_org_image['image'])
 
             if self.transform_mask:
                 # Apply median filtering to combined mask
-                transform_mask = albumentations.Compose([
-                    albumentations.MedianBlur(blur_limit=(7,9), p=1.0),
+                transform_mask = A.Compose([
+                    A.MedianBlur(blur_limit=(7,9), p=1.0),
                 ])
                 transformed_msk_all = transform_mask(image=msk_all.astype(np.uint8))
                 msk_all = torch.from_numpy(transformed_msk_all['image'])
 
+        # Create sample - additional channel dimension is added last for images
         sample = {
-            'org_image': np.expand_dims(org_image, axis=-1),
-            'image': np.expand_dims(image, axis=-1),
-            # 'masks_all': msk_all,
-            'org_masks_all': np.expand_dims(org_msk_all, axis=-1),
-            # 'masks_all': np.expand_dims(msk_all, axis=-1),
+            'org_image': torch.from_numpy(org_image).unsqueeze(-1),
+            'image': image.unsqueeze(-1),
+            'org_masks_all': org_msk_all,
             'masks_all': msk_all,
             'masks': masks,
             'bounding_box': bounding_box,
