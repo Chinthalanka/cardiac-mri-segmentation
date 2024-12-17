@@ -14,7 +14,7 @@ def evaluate(net, dataloader, device, amp, multi_class=False):
     with torch.no_grad():
         with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
             for batch in tqdm(dataloader, total=num_val_batches, desc='Validation round', unit='batch', leave=False):
-                images, masks = batch['image'], batch['masks_all'] if multi_class else batch['masks'][:, 1:, :, :]
+                images, masks = batch['image'], batch['masks_all']
                 images = images.permute(0, 3, 1, 2)
 
                 # move images and labels to correct device and type
