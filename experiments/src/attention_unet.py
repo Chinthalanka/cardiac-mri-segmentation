@@ -5,7 +5,6 @@ This module contains the code for Attention U-Net architecture.
 # Import libraries
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 # Define an attention block
