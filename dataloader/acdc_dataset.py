@@ -2,10 +2,8 @@ import os
 import torch
 import numpy as np
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
 from skimage import io
 from torch.utils.data import Dataset
-from torchvision import transforms
 
 
 # Ignore warnings
@@ -43,9 +41,6 @@ class ACDCDataset(Dataset):
                 ],
                 p=0.3,
             ),
-
-            # Ensure the data is converted to tensors
-            # ToTensorV2(),
         ],
             additional_targets={"mask": "mask"}  # To apply the same transformations to masks
         )
@@ -59,15 +54,11 @@ class ACDCDataset(Dataset):
 
             # Normalize image
             A.augmentations.Normalize(mean=0.5, std=0.5, max_pixel_value=1.0),
-
-            # Ensure the data is converted to tensors
-            # ToTensorV2(),
         ],
         )
 
 
         self.img_dir = os.path.join(self.root_dir, f'{self.dataset}/labeled_-1/images/')
-        self.msk_all_dir = os.path.join(self.root_dir, f'{self.dataset}/labeled_-1/masks_all/')
         self.msk_dir = os.path.join(self.root_dir, f'{self.dataset}/labeled_-1/masks/')
 
         for img in os.listdir(self.img_dir):
@@ -115,45 +106,6 @@ class ACDCDataset(Dataset):
         msk_all[msk_myo == 1] = 3
         org_msk_all = msk_all.copy()
 
-        masks = torch.stack([
-            torch.zeros(msk_lv.shape, dtype=torch.uint8),  # Create mask for the background
-            torch.tensor(msk_lv, dtype=torch.uint8),
-            torch.tensor(msk_rv, dtype=torch.uint8),
-            torch.tensor(msk_myo, dtype=torch.uint8)
-        ],
-            dim=0
-        )
-
-        # Crop and resize transform
-        if self.crop_resize_ind:
-            # Compute the bounding box
-            bounding_box, _ = self.get_combined_bounding_box_with_margin(masks, margin=self.margin)
-            x_min, y_min, x_max, y_max = bounding_box
-
-            crop_resize_transform = A.Compose([
-                A.Crop(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max),
-                A.Resize(self.target_size[0], self.target_size[1])
-                # ToTensorV2()
-            ],
-            additional_targets={'mask_combined': 'mask'}
-            )
-
-            crop_resize_transformed = crop_resize_transform(image=image,
-                                                            masks=[masks[i].numpy() for i in range(masks.shape[0])],
-                                                            mask_combined=msk_all)
-            image = crop_resize_transformed["image"]
-            masks = torch.stack([torch.tensor(m) for m in crop_resize_transformed["masks"]])
-            msk_all = crop_resize_transformed["mask_combined"]
-
-            bounding_box = torch.tensor([
-                x_min / self.target_size[0], y_min / self.target_size[0],
-                x_max / self.target_size[0], y_max / self.target_size[0]
-            ],
-                dtype=torch.float32
-            )
-        else:
-            bounding_box = [0.0, 0.0, 1.0, 1.0]
-
         # Apply transformations to image and mask
         if self.transform_ind:
             # Apply common transformations
@@ -165,16 +117,12 @@ class ACDCDataset(Dataset):
             transformed = self.transform_img(image=image)
             image = torch.from_numpy(transformed['image'])
 
-            # Transform original image
-            # augmented_org_image = self.transform(image=org_image)
-            # org_image = torch.from_numpy(augmented_org_image['image'])
-
             if self.transform_mask:
                 # Apply median filtering to combined mask
                 transform_mask = A.Compose([
                     A.MedianBlur(blur_limit=(7,9), p=1.0),
                 ])
-                transformed_msk_all = transform_mask(image=msk_all.astype(np.uint8))
+                transformed_msk_all = transform_mask(image=msk_all.to(torch.int8))
                 msk_all = torch.from_numpy(transformed_msk_all['image'])
 
         # Create sample - additional channel dimension is added last for images
@@ -183,8 +131,6 @@ class ACDCDataset(Dataset):
             'image': image.unsqueeze(-1),
             'org_masks_all': org_msk_all,
             'masks_all': msk_all,
-            'masks': masks,
-            'bounding_box': bounding_box,
             'idx': idx
         }
 
