@@ -165,4 +165,5 @@ cython_debug/
 /code_backup
 /experiments/models
 /experiments/outputs
+/experiments/mlruns
 /experiments/logs
