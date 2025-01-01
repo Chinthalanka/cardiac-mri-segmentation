@@ -5,6 +5,7 @@ Module to train a Pytorch model
 # Import Libraries
 import mlflow
 import logging
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,6 +21,7 @@ logger.setLevel(logging.INFO)
 
 
 def train_model(
+        dataset,
         model,
         training_dataset,
         validation_dataset,
@@ -61,6 +63,7 @@ def train_model(
         early_stopping = EarlyStopping(patience=patience, min_delta=min_delta)
 
         logger.info(f'''Starting training:
+            Dataset:         {dataset}
             Model:           {model_name}
             Epochs:          {epochs}
             Batch size:      {batch_size}
@@ -84,6 +87,7 @@ def train_model(
         }
 
         mlflow.log_params(params)
+        mlflow.set_tag("dataset", dataset)
         mlflow.set_tag("model", model_name)
 
         # Initialize TensorBoard writer
@@ -98,14 +102,15 @@ def train_model(
         criterion = nn.CrossEntropyLoss() if multi_class else nn.BCEWithLogitsLoss()
         criterion.to(device=device)
         global_step = 0
+        best_val_loss = np.inf
 
         # Begin training
         for epoch in range(start_epoch, epochs + 1):
             model.train()
             epoch_loss = 0
             epoch_dice_loss = 0
-            running_val_dice_loss = 0
-            running_val_dice_loss_steps = 0
+            # running_val_dice_loss = 0
+            # running_val_dice_loss_steps = 0
 
             with tqdm(total=n_train, desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
                 for batch in train_dataloader:
@@ -134,9 +139,10 @@ def train_model(
                             loss_ce = criterion(masks_pred, true_masks)  # true_masks.squeeze(1).long()
 
                             if multi_class:
+                                # Ignore background when computing Dice loss
                                 loss_dice = dice_loss(
-                                    F.softmax(masks_pred, dim=1).float(),
-                                    F.one_hot(true_masks, model.n_classes).permute(0, 3, 1, 2).float(),
+                                    F.softmax(masks_pred, dim=1).float()[:, 1:],
+                                    F.one_hot(true_masks, model.n_classes).permute(0, 3, 1, 2).float()[:, 1:],
                                     multiclass=True
                                 )
                             else:
@@ -157,8 +163,8 @@ def train_model(
 
                     pbar.update(images.shape[0])
                     global_step += 1
-                    epoch_loss += loss.item() * images.size(0)
-                    epoch_dice_loss += loss_dice.item() * images.size(0)
+                    epoch_loss += loss.item()
+                    epoch_dice_loss += loss_dice.item()
                     # pbar.set_postfix(**{'loss (batch)': loss.item()})
                     pbar.set_postfix(**{'total_loss (batch)': loss.item(), 'dice_loss (batch)': loss_dice.item(),
                                         'ce_loss (batch)': loss_ce.item()})
@@ -168,27 +174,28 @@ def train_model(
                     if division_step > 0:
                         if global_step % division_step == 0:
                             val_score = evaluate(model, val_dataloader, device, amp, multi_class=multi_class)
-                            running_val_dice_loss += 1 - val_score
-                            running_val_dice_loss_steps += 1
+                            # running_val_dice_loss += 1 - val_score
+                            # running_val_dice_loss_steps += 1
                             scheduler.step(val_score)
-                            logger.info('Validation Dice score: {}'.format(val_score))
+                            logger.info(f'Validation Dice score: {val_score:.4f}')
 
-            if save_checkpoint:
+            # Compute average losses
+            avg_loss = epoch_loss / len(train_dataloader)
+            avg_dice_loss = epoch_dice_loss / len(train_dataloader)
+            # avg_dice_val_loss = running_val_dice_loss / running_val_dice_loss_steps
+            avg_dice_val_loss = 1 - evaluate(model, val_dataloader, device, amp, multi_class=multi_class)
+            logger.info(f"Validation Dice Loss at Epoch {epoch}: {avg_dice_val_loss:.4f}")
+
+            # Save checkpoints of best performing models
+            if save_checkpoint and (avg_dice_val_loss < best_val_loss):
+                best_val_loss = avg_dice_val_loss
                 Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
                 state_dict = model.state_dict()
                 # state_dict['mask_values'] = training_dataset.mask_values
                 torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
-                logger.info(f'Checkpoint {epoch} saved!')
+                logger.info(f'Checkpoint {epoch} saved! --> best_val_loss: {best_val_loss:.4f}')
 
             # Log metrics to TensorBoard
-            avg_loss = epoch_loss / len(training_dataset)
-            avg_dice_loss = epoch_dice_loss / len(training_dataset)
-            avg_dice_val_loss = running_val_dice_loss / running_val_dice_loss_steps
-            writer.add_scalar("hybrid_loss_training", avg_loss, epoch)
-            writer.add_scalar("dice_loss/training", avg_dice_loss, epoch)
-            writer.add_scalar("dice_loss/validation", avg_dice_val_loss, epoch)
-            writer.add_scalar("dice_score/training", (1 - avg_dice_loss), epoch)
-            writer.add_scalar("dice_score/validation", (1 - avg_dice_val_loss), epoch)
             writer.add_scalars("dice_loss_and_score",
                                {
                                    'training_loss': avg_dice_loss,
@@ -197,10 +204,14 @@ def train_model(
                                    'validation_score': (1 - avg_dice_val_loss)
                                },
                                epoch)
+            writer.add_scalar("hybrid_loss_training", avg_loss, epoch)
+            writer.add_scalar("dice_loss/training", avg_dice_loss, epoch)
+            writer.add_scalar("dice_loss/validation", avg_dice_val_loss, epoch)
+            writer.add_scalar("dice_score/training", (1 - avg_dice_loss), epoch)
+            writer.add_scalar("dice_score/validation", (1 - avg_dice_val_loss), epoch)
 
             # Check for early stopping
             early_stopping(avg_dice_val_loss)
-            logger.info(f"Validation Dice Loss at Epoch {epoch}: {avg_dice_val_loss:.4f}")
             if early_stopping.early_stop:
                 print(f"Early stopping triggered at epoch {epoch + 1}")
                 logger.info(f'Early stopping triggered at epoch {epoch + 1}')
