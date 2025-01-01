@@ -162,6 +162,7 @@ cython_debug/
 # Custom directories
 /data
 /logs
+/mlruns
 /code_backup
 /experiments/models
 /experiments/outputs
