@@ -5,7 +5,7 @@ Module for inferencing.
 # Import Libraries
 import torch
 import torch.nn.functional as F
-from utils import dice_coeff
+from utils import dice_coeff, multiclass_dice_coeff
 
 # Function to evaluate Dice score for each class in the test set
 def evaluate_dice_score(model, dataloader, num_classes=4, multi_class=True, device='cpu', threshold=0.5):
@@ -27,14 +27,19 @@ def evaluate_dice_score(model, dataloader, num_classes=4, multi_class=True, devi
             outputs = model(images)  # Shape: (batch_size, 4, height, width)
             predictions = F.one_hot(outputs.argmax(dim=1), model.n_classes).permute(0, 3, 1, 2).float()
 
-
             # Calculate Dice score for each class
             for i in range(num_classes):  # Loop over each class
-                dice_scores[i] += dice_coeff(
-                    predictions[:, i, :, :].flatten(0, 1),
-                    true_masks[:, i, :, :].flatten(0, 1),
+                # dice_scores[i] += dice_coeff(
+                #     predictions[:, i, :, :].flatten(0, 1),
+                #     true_masks[:, i, :, :].flatten(0, 1),
+                #     reduce_batch_first=False
+                #     )
+
+                dice_scores[i] += multiclass_dice_coeff(
+                    predictions[:, i, :, :],
+                    true_masks[:, i, :, :],
                     reduce_batch_first=False
-                    )
+                )
 
             # count += images.size(0)  # Update sample count
             # batch_count += 1 # Update batch count
