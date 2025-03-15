@@ -5,7 +5,6 @@ This module contains the code for Residual U-Net (ResU-Net) architecture.
 # Import libraries
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 # Define a residual block
@@ -15,8 +14,8 @@ class ResidualConvBlock(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
         self.relu = nn.ReLU(inplace=True)
-        self.batchnorm1 = nn.BatchNorm2d(out_channels)
-        self.batchnorm2 = nn.BatchNorm2d(out_channels)
+        self.batchnorm1 = nn.GroupNorm(num_groups=8, num_channels=out_channels) # nn.BatchNorm2d(out_channels)
+        self.batchnorm2 = nn.GroupNorm(num_groups=8, num_channels=out_channels) # nn.BatchNorm2d(out_channels)
 
         # Residual connection (1x1 convolution to match dimensions if in_channels != out_channels)
         self.residual = nn.Conv2d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else None

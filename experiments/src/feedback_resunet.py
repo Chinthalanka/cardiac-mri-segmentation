@@ -8,44 +8,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
-class ConvLSTMCell(nn.Module):
-    def __init__(self, input_channels, hidden_channels, kernel_size):
-        super(ConvLSTMCell, self).__init__()
-        padding = kernel_size // 2  # Calculate padding to maintain spatial dimensions
-        self.input_channels = input_channels
-        self.hidden_channels = hidden_channels
-        self.kernel_size = kernel_size
-
-        # Convolution to compute input, forget, output, and cell gates
-        self.conv = nn.Conv2d(input_channels + hidden_channels, 4 * hidden_channels, kernel_size, padding=padding)
-
-    def forward(self, input_tensor, cur_state):
-        h_cur, c_cur = cur_state  # Current hidden and cell states
-
-        # Concatenate input and hidden state along the channel dimension
-        combined = torch.cat([input_tensor, h_cur], dim=1)  # concatenate along channel axis
-        combined_conv = self.conv(combined)  # Apply convolution
-        cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_channels, dim=1)  # Split into gates
-
-        # Apply activations for input, forget, output, and cell gates
-        i = torch.sigmoid(cc_i)  # Input gate
-        f = torch.sigmoid(cc_f)  # Forget gate
-        o = torch.sigmoid(cc_o)  # Output gate
-        g = torch.tanh(cc_g)  # Cell gate
-
-        # Compute next cell and hidden states
-        c_next = f * c_cur + i * g  # Update cell state
-        h_next = o * torch.tanh(c_next)  # Update hidden state
-
-        return h_next, c_next
-
-    def init_hidden(self, batch_size, image_size):
-        height, width = image_size
-        # Initialize hidden and cell states with zeros
-        return (Variable(torch.zeros(batch_size, self.hidden_channels, height, width)).cuda(),
-                Variable(torch.zeros(batch_size, self.hidden_channels, height, width)).cuda())
-
-
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ResidualBlock, self).__init__()
